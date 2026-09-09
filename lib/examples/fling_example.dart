@@ -10,201 +10,295 @@ class FlingExample extends StatefulWidget {
 
 class _FlingExampleState extends State<FlingExample>
     with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
 
-  double _x = 40;
+  final ScrollController _scrollController =
+  ScrollController();
 
-  double _minX = 0;
-  double _maxX = 0;
+  late final AnimationController _animationController;
 
-  String _status = '주황색 박스를 빠르게 좌우로 던져보세요';
+  double _dragStartOffset = 0;
 
   @override
   void initState() {
     super.initState();
 
-    _controller = AnimationController.unbounded(
-      vsync: this,
-    );
+    _animationController =
+        AnimationController.unbounded(
+          vsync: this,
+        );
 
-    _controller.addListener(() {
-      final value = _controller.value.clamp(
-        _minX,
-        _maxX,
+    /*
+     * AnimationController의 값이 변하면
+     * ListView의 Scroll Offset도 변경한다.
+     */
+    _animationController.addListener(() {
+      if (!_scrollController.hasClients) {
+        return;
+      }
+
+      final position =
+          _scrollController.position;
+
+      final offset =
+      _animationController.value.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
       );
 
-      if (value != _x) {
-        setState(() {
-          _x = value;
-        });
+      _scrollController.jumpTo(offset);
+
+      /*
+       * ListView 끝에 도달하면
+       * Fling Animation 정지
+       */
+      if (_animationController.value <=
+          position.minScrollExtent ||
+          _animationController.value >=
+              position.maxScrollExtent) {
+
+        _animationController.stop();
       }
-
-      if (_controller.value <= _minX ||
-          _controller.value >= _maxX) {
-        _controller.stop();
-      }
-    });
-  }
-
-  void _startFling(double velocity) {
-    _controller.stop();
-
-    _controller.value = _x;
-
-    final simulation = FrictionSimulation(
-      0.135,
-      _x,
-      velocity,
-    );
-
-    _controller.animateWith(simulation);
-
-    setState(() {
-      _status =
-      'Fling 시작\n'
-          'velocity = ${velocity.toStringAsFixed(0)} px/s';
     });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _animationController.dispose();
+    _scrollController.dispose();
+
     super.dispose();
+  }
+
+  void _onVerticalDragStart(
+      DragStartDetails details,
+      ) {
+    /*
+     * Fling 중에 다시 손가락을 누르면
+     * 기존 관성 이동을 즉시 중단한다.
+     */
+    _animationController.stop();
+
+    _dragStartOffset =
+        _scrollController.offset;
+  }
+
+  void _onVerticalDragUpdate(
+      DragUpdateDetails details,
+      ) {
+    /*
+     * 손가락 이동 방향과
+     * Scroll 방향은 반대다.
+     *
+     * 손가락 ↑
+     * delta.dy < 0
+     *
+     * ListView는 아래쪽 데이터 방향으로 이동
+     * Scroll Offset 증가
+     */
+
+    final nextOffset =
+        _scrollController.offset -
+            details.delta.dy;
+
+    final position =
+        _scrollController.position;
+
+    final offset =
+    nextOffset.clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+
+    _scrollController.jumpTo(offset);
+  }
+
+  void _onVerticalDragEnd(
+      DragEndDetails details,
+      ) {
+    /*
+     * 손가락을 뗀 순간의 속도
+     */
+    final velocity =
+        details.primaryVelocity ?? 0;
+
+    /*
+     * Gesture의 velocity 방향과
+     * Scroll Offset 방향은 반대
+     */
+    final scrollVelocity =
+    -velocity;
+
+    /*
+     * 너무 느리게 움직였다면
+     * Fling으로 처리하지 않는다.
+     */
+    if (scrollVelocity.abs() < 300) {
+      return;
+    }
+
+    /*
+     * 현재 ListView Scroll Offset에서
+     * Fling 시작
+     */
+    _animationController.value =
+        _scrollController.offset;
+
+    /*
+     * 마찰에 의해 속도가
+     * 점점 감소하는 Simulation
+     */
+    final simulation =
+    FrictionSimulation(
+      0.135,
+      _scrollController.offset,
+      scrollVelocity,
+    );
+
+    /*
+     * Simulation을 이용해서
+     * 관성 이동 시작
+     */
+    _animationController.animateWith(
+      simulation,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Fling Gesture'),
+        title: const Text(
+          'GestureDetector Fling',
+        ),
       ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          const boxSize = 130.0;
 
-          _minX = 0;
+      body: Padding(
+        padding: const EdgeInsets.all(12),
 
-          _maxX = (constraints.maxWidth - boxSize)
-              .clamp(0.0, double.infinity);
+        /*
+         * 이 GestureDetector가
+         * ListView의 Drag/Fling Gesture를
+         * 직접 처리한다.
+         */
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
 
-          _x = _x.clamp(
-            _minX,
-            _maxX,
-          );
+          onVerticalDragStart:
+          _onVerticalDragStart,
 
-          return Stack(
-            children: [
-              Positioned(
-                top: 20,
-                left: 20,
-                right: 20,
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    _status,
-                    textAlign: TextAlign.center,
-                  ),
-                ),
+          onVerticalDragUpdate:
+          _onVerticalDragUpdate,
+
+          onVerticalDragEnd:
+          _onVerticalDragEnd,
+
+          child: Container(
+            width: double.infinity,
+            height: double.infinity,
+
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+
+              border: Border.all(
+                color: Colors.orange,
+                width: 3,
               ),
 
-              Positioned(
-                top: 180,
-                left: 16,
-                right: 16,
-                child: Container(
-                  height: 180,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    border: Border.all(
-                      color: Colors.grey,
-                      width: 2,
+              borderRadius:
+              BorderRadius.circular(24),
+            ),
+
+            child: ClipRRect(
+              borderRadius:
+              BorderRadius.circular(21),
+
+              /*
+               * 중요:
+               *
+               * ListView 자체 Scroll Gesture를
+               * 비활성화한다.
+               *
+               * 스크롤은 바깥 GestureDetector가
+               * 직접 처리한다.
+               */
+              child: ListView.builder(
+                controller:
+                _scrollController,
+
+                physics:
+                const NeverScrollableScrollPhysics(),
+
+                padding:
+                const EdgeInsets.all(12),
+
+                itemCount: 1000,
+
+                itemBuilder:
+                    (context, index) {
+
+                  return Container(
+                    height: 72,
+
+                    margin:
+                    const EdgeInsets.only(
+                      bottom: 8,
                     ),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  alignment: Alignment.center,
-                  child: const Text(
-                    '이 영역 안에서 Fling',
-                    style: TextStyle(
-                      color: Colors.grey,
+
+                    padding:
+                    const EdgeInsets.symmetric(
+                      horizontal: 18,
                     ),
-                  ),
-                ),
-              ),
 
-              Positioned(
-                top: 205,
-                left: _x,
+                    decoration:
+                    BoxDecoration(
+                      color: Colors.white,
 
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-
-                  onHorizontalDragStart: (_) {
-                    _controller.stop();
-
-                    setState(() {
-                      _status = 'Drag 시작';
-                    });
-                  },
-
-                  onHorizontalDragUpdate: (details) {
-                    setState(() {
-                      _x = (_x + details.delta.dx)
-                          .clamp(
-                        _minX,
-                        _maxX,
-                      );
-
-                      _status = 'Drag 중';
-                    });
-                  },
-
-                  onHorizontalDragEnd: (details) {
-                    final velocity =
-                        details.primaryVelocity ?? 0;
-
-                    _startFling(velocity);
-                  },
-
-                  child: Container(
-                    width: boxSize,
-                    height: boxSize,
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade100,
-                      border: Border.all(
-                        color: Colors.orange,
-                        width: 3,
+                      borderRadius:
+                      BorderRadius.circular(
+                        14,
                       ),
-                      borderRadius: BorderRadius.circular(20),
+
+                      border: Border.all(
+                        color:
+                        Colors.orange.shade200,
+                      ),
                     ),
-                    alignment: Alignment.center,
-                    child: const Column(
-                      mainAxisSize: MainAxisSize.min,
+
+                    child: Row(
                       children: [
-                        Icon(
-                          Icons.speed,
-                          size: 38,
-                          color: Colors.orange,
+                        CircleAvatar(
+                          backgroundColor:
+                          Colors.orange
+                              .shade100,
+
+                          child: Text(
+                            '${index + 1}',
+                          ),
                         ),
-                        SizedBox(height: 8),
+
+                        const SizedBox(
+                          width: 16,
+                        ),
+
                         Text(
-                          'GestureDetector\nFLING AREA',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
+                          'List Item '
+                              '${index + 1}',
+
+                          style:
+                          const TextStyle(
+                            fontSize: 17,
+                            fontWeight:
+                            FontWeight.bold,
                           ),
                         ),
                       ],
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
-            ],
-          );
-        },
+            ),
+          ),
+        ),
       ),
     );
   }
